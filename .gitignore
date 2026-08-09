@@ -1,0 +1,19 @@
+# Environment
+.env
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Generated at ingestion time: convert_xlsx_to_csv() (etl/source_files.py)
+# writes a derived .csv beside its source .xlsx, same stem. That's build
+# output, not source data - the .xlsx is the tracked original. Listed
+# explicitly by name rather than a blanket *.csv rule, so a genuine
+# raw-CSV-only extract added later (no .xlsx counterpart) stays trackable
+# instead of silently disappearing into this file.
+source_files/XYZ-Company_Static_Data_2025-12-31.csv
+source_files/XYZ-Corporate_Actions-2025-12-31.csv
+source_files/XYZ-Shareholder_Holdings_2025-12-31.csv
+source_files/XYZ-Shareholder_Transactions-2025-12-31.csv
+source_files/XYZ-Shareholders_Static_Data_2025-12-31.csv
