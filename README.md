@@ -390,7 +390,7 @@ That is the whole procedure. The harness needs nothing beyond a populated
 `.env` — not even `create_env.py`. It creates its own scratch database named
 after `ETL_DB` with a `_verify` suffix, seeds reference data and production
 tables, ingests every extract in `source_files/`, registers the mappings,
-runs 36 checks, and drops the database again. **The database named in `ETL_DB`
+runs 41 checks, and drops the database again. **The database named in `ETL_DB`
 is never touched.**
 
 It ingests through the same `etl/ingestion.py` the wizard uses and invokes
