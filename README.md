@@ -62,14 +62,14 @@ Modelling it is listed under extension points.
 
 ## Setup
 
-### 0. Clone
+### 1. Clone
 
-​```
+```
 git clone https://github.com/testops-intelli/etl-runner.git
 cd etl-runner
-​```
+```
 
-### 1. Install
+### 2. Install
 
 **Windows (PowerShell)**
 
@@ -87,7 +87,7 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 2. Configure credentials
+### 3. Configure credentials
 
 Copy the example file and edit it. `.env` is gitignored; `.env.example` is
 committed.
@@ -108,7 +108,7 @@ cp .env.example .env
 `PGUSER` must be permitted to run `CREATE DATABASE`. `PGADMIN_DB` is an
 existing database used only to issue that statement — normally `postgres`.
 
-### 3. Build the environment
+### 4. Build the environment
 
 ```
 python scripts/create_env.py
