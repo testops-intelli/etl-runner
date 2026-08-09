@@ -5,7 +5,7 @@
 .venv/
 __pycache__/
 *.pyc
-
+evidence/
 # Generated at ingestion time: convert_xlsx_to_csv() (etl/source_files.py)
 # writes a derived .csv beside its source .xlsx, same stem. That's build
 # output, not source data - the .xlsx is the tracked original. Listed
