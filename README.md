@@ -62,6 +62,13 @@ Modelling it is listed under extension points.
 
 ## Setup
 
+### 0. Clone
+
+​```
+git clone https://github.com/testops-intelli/etl-runner.git
+cd etl-runner
+​```
+
 ### 1. Install
 
 **Windows (PowerShell)**
