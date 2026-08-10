@@ -23,6 +23,7 @@ from etl.registry import (
     describe_rule,
     find_mappings_for_pair,
     get_column_rules,
+    get_mapping_set,
     insert_column_rule,
     insert_discarded_columns,
     insert_value_map,
@@ -459,7 +460,32 @@ def main() -> None:
                     print("A mapping set is identified by name. The ETL runner")
                     print("is invoked with this name, so one staging table can")
                     print("feed several targets under different mapping names.")
-                    mapping_name = prompt("Mapping name", default_name)
+
+                    while True:
+                        mapping_name = prompt("Mapping name", default_name)
+                        collision = get_mapping_set(
+                            cursor, config.meta_schema, mapping_name)
+                        if collision is None:
+                            break
+                        if (collision["source_schema"] == config.stage_schema
+                                and collision["source_table"] == stage_table
+                                and collision["target_schema"] == config.prod_schema
+                                and collision["target_table"] == target_table):
+                            # Same pair this wizard run is already defining --
+                            # 'existing' above would normally have caught this,
+                            # but it's harmless to let it through here too.
+                            break
+                        print()
+                        print("!! '{}' is already registered for {}.{} -> "
+                              "{}.{}".format(
+                                  mapping_name,
+                                  collision["source_schema"],
+                                  collision["source_table"],
+                                  collision["target_schema"],
+                                  collision["target_table"]))
+                        print("   Reusing this name would silently overwrite "
+                              "that mapping's rules on save. Choose a "
+                              "different name.")
 
                     print()
                     print("An optional row filter restricts which staging rows")
