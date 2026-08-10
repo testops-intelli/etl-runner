@@ -13,14 +13,17 @@ what allows one runner to serve any staging/production table pair.
 
 ## Scope
 
-This framework covers **ingestion, mapping and transfer**. Its success
-criterion is completeness: every source row inserted, zero failures.
+This framework covers **ingestion, mapping, transfer and validation**.
 
-It does **not** perform semantic or numerical validation. Confirming that the
-migrated values are *correct* — aggregate reconciliation, row-level field
-comparison, referential integrity across the target — is a separate concern
-and a separate script, not yet built. A PASS from the runner means the data
-moved, not that the data is right.
+The runner's success criterion is completeness: every source row inserted,
+zero failures. A PASS from the runner means the data moved — it does not by
+itself mean the data is *right*.
+
+That second question — is what landed in production correct — is answered by
+a separate validator. It re-derives every target value from the staging row
+and the mapping's own rules, matches rows to production on a declared
+identifying key, and checks any cross-table invariants declared for the
+mapping. See [Validate a migration](#validate-a-migration).
 
 ---
 
@@ -29,17 +32,23 @@ moved, not that the data is right.
 ```
 source_files/client_extract.xlsx
         |
-        |  scripts/ingest.py        convert to CSV, normalize headers,
-        v                           create staging table, load
-stage.<table>                       (all columns TEXT)
+        |  scripts/ingest.py           convert to CSV, normalize headers,
+        v                              create staging table, load
+stage.<table>                          (all columns TEXT)
         |
-        |  scripts/map_wizard.py    per target column, record a rule
-        v                           in the metadata registry
+        |  scripts/map_wizard.py       per target column, record a rule
+        v                              in the metadata registry
 etl_meta.mapping_set / column_rule / value_map
         |
-        |  scripts/etl_runner.py    apply rules, cast, insert
+        |  scripts/etl_runner.py       apply rules, cast, insert
         v
-prod.<table>                        (pre-existing target contract)
+prod.<table>                           (pre-existing target contract)
+        |
+        |  scripts/validate_wizard.py  record the identifying key and any
+        |                              cross-table invariants (once per mapping)
+        |  scripts/etl_validator.py    re-derive, compare, reconcile
+        v
+evidence/validation_<mapping>_<timestamp>.xlsx
 ```
 
 ### Load order
@@ -198,7 +207,7 @@ python scripts/etl_runner.py --list
 
 ---
 
-## Failure behaviour
+## Failure behaviour (runner)
 
 **The run is one transaction, all or nothing.** A row that cannot be
 transformed does not stop the run — it is recorded and processing continues, so
@@ -295,6 +304,95 @@ you named your staging table.
 
 ---
 
+## Validate a migration
+
+The runner proves every source row was inserted. It does not prove the values
+are right — that a `LOOKUP` resolved to the correct key, that a `VALUE_MAP`
+translated the way the client actually meant, that a total still reconciles.
+The validator is a second, independent pass over the same mapping that checks
+exactly that.
+
+**Re-derivation, not checksumming.** Staging is TEXT and production is typed,
+so hashing raw bytes across the two can never match. And hashing what the
+runner itself wrote only proves the runner agrees with itself. The validator
+instead re-derives every target value straight from the staging row and the
+mapping's own rules — the same source the runner used — and compares that
+against what production actually holds.
+
+This has a stated limit: re-derivation uses the same rule the runner used, so
+it cannot catch a mapping that is *wrong*, only one that was applied
+inconsistently. Catching a wrong mapping needs a fact about the data that
+doesn't come from the mapping itself — a declared cross-table invariant, such
+as holdings units totalling the company's shares outstanding.
+
+### Record the key and any invariants (once per mapping)
+
+```
+python scripts/validate_wizard.py --mapping holdings_to_prod
+```
+
+Two things are captured here, and neither can be inferred from the mapping
+itself:
+
+- **The identifying key.** A target table's primary key is a surrogate issued
+  at insert time, so it can't be matched back to a staging row on its own.
+  Business identity — which target columns, taken together, identify a row —
+  has to be stated. Only target-side columns are asked for; the validator
+  works out the staging side from whichever source columns feed them.
+- **Cross-table invariants.** A fact about the data, not about column types —
+  e.g. `SUM(holdings.units)` should equal `company_master.shares_outstanding`.
+  Declared once here, checked on every subsequent run.
+
+Nothing is written until the summary is confirmed.
+
+### Run the validator
+
+```
+python scripts/etl_validator.py --mapping holdings_to_prod
+python scripts/etl_validator.py --list
+```
+
+The check runs in three layers:
+
+1. **Row level.** Every target value is re-derived and matched against
+   production on the declared key. Missing rows, orphan rows, duplicate keys
+   and per-column value mismatches are reported separately, since they mean
+   different things.
+2. **Derived aggregates.** Row counts, and a total for every numeric column
+   carried across by a `DIRECT` rule. No configuration needed — the registry
+   already knows enough to build these.
+3. **Declared invariants.** The cross-table checks recorded above. The only
+   layer that can catch a wrong mapping rather than an incomplete one.
+
+```
+VALIDATION RESULT: FAIL
+
+ROW COMPARISON
+  Source rows            100
+  Target rows            100
+  Matched                99
+  Missing from target    0
+  In target, no source   0
+  Duplicate keys         0
+  Value mismatches       1
+
+Value mismatches:
+  row 42     currency_id          expected 3 but found 12
+
+AGGREGATES
+  declared invariants:
+    [PASS] holdings vs shares_outstanding    1535000 vs 1535000
+```
+
+Every run writes an xlsx evidence workbook to `evidence/` and a row to
+`etl_meta.validation_run`, whether it passed or failed. The validator never
+writes to production — its only write is that log row.
+
+If no identifying key has been recorded for a mapping, the validator says so
+and points at `validate_wizard.py` rather than guessing one.
+
+---
+
 ## Metadata registry
 
 | Table | Purpose |
@@ -305,6 +403,9 @@ you named your staging table.
 | `discarded_source_column` | Source columns deliberately not carried across |
 | `ingestion_log` | Every file loaded, with row and column counts |
 | `etl_run` | Every run, its counts, and its outcome |
+| `validation_key` | The target columns that identify a row for a mapping |
+| `aggregate_check` | Declared cross-table invariants for a mapping |
+| `validation_run` | Every validator run, its counts, and its outcome |
 
 ---
 
@@ -368,7 +469,6 @@ Verified on PostgreSQL 16 against the source extracts in `source_files/`:
   (`Active` to `A`), `NULL` (sedol), plus a discarded source column
 - All six rule types, including `LOOKUP` resolving holder names to surrogate
   keys with zero unresolved rows
-- Row filter restricting a corporate actions extract to dividend rows only
 - Failure path: bad numeric, unparseable date, unmapped `VALUE_MAP` value, and
   unresolvable `LOOKUP` key each fail their row, are reported by row and
   column, and leave production unchanged after rollback
@@ -400,14 +500,20 @@ path rather than a reimplementation of it.
 The failure behaviour is the part worth trusting, and a successful run never
 demonstrates it. That is what the harness is for.
 
+### Known gap
+
+A mapping can carry an optional row filter (see
+[Define a mapping](#define-a-mapping)), but no mapping in the verified chain
+above uses one, and `verify_engine.py` never exercises the code path either.
+It is implemented, not verified — treat it accordingly until a mapping
+actually uses one and that run is added here.
+
 ---
 
 ## Extension points
 
 Stated rather than implied — none of the following is implemented.
 
-- **Semantic validation.** The runner checks completeness only. Aggregate
-  reconciliation and row-level field comparison belong in a separate validator.
 - **Set-based insertion.** Rows are inserted individually inside SAVEPOINTs so
   a database rejection can be attributed to the row that caused it. That trades
   throughput for failure attribution, which suits migration rehearsal. Volume
